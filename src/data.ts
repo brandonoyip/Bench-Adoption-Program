@@ -1,0 +1,18 @@
+import { createClient } from '@supabase/supabase-js';
+import sampleLocations from './sample-locations.json';
+export type Bench = { id: number; area: string; lat: number; lng: number; donor: string | null; starts: string | null; ends: string | null; dedication: string | null };
+export const areas = ['Parade Ground', 'Van Cortlandt Lake', 'Southwest Playground', 'Old Croton Aqueduct', 'North Woods', 'Allen Shandler Recreation Area'];
+const donors = ['The Martinez Family','In memory of Eleanor Brooks','Friends of Van Cortlandt Park','The Chen Family','Michael & Susan Rivera','The Williams Family','A neighbor who loves this park'];
+export function seed(): Bench[] { return Array.from({length:524},(_,i)=> { const zone=i%6; const location=sampleLocations[i]; const adopted=i%5<2; return {id:i+1,area:areas[zone],lat:location.lat,lng:location.lng,donor:adopted?donors[i%donors.length]:null,starts:adopted?'2026-01-01':null,ends:adopted?'2028-01-01':null,dedication:adopted?'For all the moments spent together, and the many more to come.':null}; }); }
+const env = (import.meta as unknown as {env:Record<string,string>}).env;
+const publicKey = env.VITE_SUPABASE_PUBLISHABLE_KEY || env.VITE_SUPABASE_ANON_KEY;
+export const supabase = env.VITE_SUPABASE_URL && publicKey ? createClient(env.VITE_SUPABASE_URL,publicKey) : null;
+export const sampleInventory = !supabase || env.VITE_SAMPLE_INVENTORY === 'true';
+export const isAdopted = (b:Bench) => !!b.ends && new Date(b.ends)>new Date();
+export const benchNumber = (id:number) => `VCP-${String(id).padStart(3,'0')}`;
+export const dateLabel = (date:string|null) => date ? new Date(date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+export function duration(b:Bench) { if(!b.starts || !b.ends)return '—'; const a=new Date(b.starts),z=new Date(b.ends); const months=(z.getFullYear()-a.getFullYear())*12+z.getMonth()-a.getMonth(); return months%12===0?`${months/12} year${months===12?'':'s'}`:`${months} months`; }
+export function timeLeft(b:Bench) { if(!isAdopted(b))return '—'; const days=Math.ceil((new Date(b.ends!).getTime()-Date.now())/86400000);return days>60?`${Math.floor(days/30)} months left`:`${days} days left`; }
+const key='vcp-benches-v1';
+export async function loadBenches():Promise<Bench[]> { if(supabase){ const {data,error}=await supabase.from('public_benches').select('*').order('id');if(error)throw new Error(error.message);return data as Bench[]; } try { const stored=localStorage.getItem(key);return stored?(JSON.parse(stored) as Bench[]).map(b=>{const location=sampleLocations.find(p=>p.id===b.id);return location?{...b,lat:location.lat,lng:location.lng}:b;}):seed(); }catch{return seed();} }
+export async function adoptBench(bench:Bench,form:{name:string;email:string;months:number;dedication:string}):Promise<void> { if(supabase){ const {error}=await supabase.rpc('adopt_bench',{p_bench_id:bench.id,p_name:form.name,p_email:form.email,p_months:form.months,p_dedication:form.dedication});if(error)throw new Error(error.message);return; } const records=await loadBenches();const target=records.find(b=>b.id===bench.id);if(!target || isAdopted(target))throw new Error('This bench has just been adopted. Please choose another bench.');const start=new Date(),end=new Date(start);const day=end.getDate();end.setDate(1);end.setMonth(end.getMonth()+form.months);end.setDate(Math.min(day,new Date(end.getFullYear(),end.getMonth()+1,0).getDate()));Object.assign(target,{donor:form.name,starts:start.toISOString(),ends:end.toISOString(),dedication:form.dedication});localStorage.setItem(key,JSON.stringify(records)); }
